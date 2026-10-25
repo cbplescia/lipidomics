@@ -207,10 +207,43 @@ SETS_PROCESS = [
      "Plasmalogens favour hexagonal phases and fusion; reduce bilayer permeability", lambda c, p: p["ether"] and c in PL),
 ]
 SETS += SETS_PROCESS
+
+# ---- subcellular localization collection ---------------------------------------
+# Lipids characteristically ENRICHED in (or made in / marking) each compartment.
+# Whole-cell lipidomics cannot measure localization; most lipids occur in several
+# compartments, so these are marker/enrichment-based hypotheses, strongest for
+# cardiolipin (mitochondria), LBPA/BMP (late endosome/lysosome), TG/ChE (droplets).
+LOC = {
+    "mito": "Mitochondrial inner membrane (CL, PG, CoQ)",
+    "fao": "Mitochondrial fatty-acid oxidation (acylcarnitines)",
+    "endo": "Endolysosome (LBPA/BMP, GM1, GM2, SPH)",
+    "ld": "Lipid droplets (TG, ChE, ZyE core)",
+    "pm_out": "Plasma membrane outer leaflet / rafts (SM, glycosphingolipids, Ch)",
+    "pm_in": "Plasma membrane inner leaflet (PS, PI, PA)",
+    "er": "ER lipid synthesis intermediates (DG, PA, PI, ZyE)",
+    "golgi": "Golgi sphingolipid maturation (SM, HexCer, ST, GM1/GM2)",
+    "perox": "Peroxisome-dependent ether lipids (O-/P-)",
+    "extra": "Extracellular / secreted lysolipid mediators (LPA, cPA, LPC, LPI)",
+}
+SETS_LOC = [
+    (LOC["mito"], "Subcellular localization", "Cardiolipin is the hallmark mitochondrial inner-membrane lipid; PG is its precursor; CoQ shuttles electrons", cls_in("CL", "PG", "Co")),
+    (LOC["fao"], "Subcellular localization", "Carnitine shuttle moves fatty acids into mitochondria for beta-oxidation", cls_in("AcCa")),
+    (LOC["endo"], "Subcellular localization", "BMP/LBPA marks late endosome ILVs; gangliosides and sphingosine are lysosomal degradation intermediates", cls_in("LBPA", "GM1", "GM2", "SPH")),
+    (LOC["ld"], "Subcellular localization", "Neutral-lipid core of lipid droplets", cls_in("TG", "ChE", "ZyE")),
+    (LOC["pm_out"], "Subcellular localization", "Outer-leaflet sphingolipids and cholesterol of the plasma membrane", cls_in("SM", "Hex1Cer", "GM1", "GM2", "ST", "Ch")),
+    (LOC["pm_in"], "Subcellular localization", "Anionic lipids on the cytosolic face of the plasma membrane", cls_in("PS", "PI", "PA")),
+    (LOC["er"], "Subcellular localization", "Glycerolipid / sterol biosynthetic intermediates made in the ER", cls_in("DG", "PA", "PI", "ZyE")),
+    (LOC["golgi"], "Subcellular localization", "SM, glucosylceramide and complex GSL are made in the Golgi", cls_in("SM", "Hex1Cer", "ST", "GM1", "GM2")),
+    (LOC["perox"], "Subcellular localization", "Ether-lipid synthesis starts in peroxisomes", lambda c, p: p["ether"]),
+    (LOC["extra"], "Subcellular localization", "Lysolipid mediators act outside the cell on GPCRs", cls_in("LPA", "cPA", "LPC", "LPI")),
+]
+SETS += SETS_LOC
+
 COLLECTIONS = {
     "functional": ["Membrane structure", "Organelle", "Storage", "Signalling", "Sphingolipids",
                    "Chemical feature", "Class x unsaturation"],
     "process_biophysics": ["Signalling process", "Compartment / leaflet", "Membrane biophysics"],
+    "localization": ["Subcellular localization"],
 }
 
 
@@ -313,6 +346,79 @@ def make_plots(tag, cats_in, res, lfcs, member, outdir):
     plt.close(fig)
 
 
+
+def make_cell_schematic(res, outdir):
+    """Cartoon cell with each compartment coloured by its set's relative log2FC."""
+    from matplotlib.patches import Ellipse, Circle, Arc
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    sub = {c: res[c].set_index("set") for c in res}
+    lim = 2.5  # colour scale saturates here so modest shifts stay visible
+    cmap, norm_ = plt.get_cmap("RdBu_r"), Normalize(-lim, lim)
+
+    fig, axs = plt.subplots(2, 1, figsize=(13, 12.5))
+    for ax, (c, label) in zip(axs, (("IFNB", "IFN-β"), ("IFNG", "IFN-γ"))):
+        def col(key):
+            r = sub[c].relative_log2FC.get(LOC[key], np.nan)
+            ok = bool((sub[c].FDR.get(LOC[key], 1) < 0.01) and abs(r) >= 0.5)
+            return (cmap(norm_(r)) if np.isfinite(r) else "#dddddd"), r, ok
+
+        def tag(key, anchor, text_xy, ha):
+            _, r, ok = col(key)
+            ax.annotate(f"{LOC[key].split(' (')[0]}\n{r:+.2f}{' *' if ok else ''}", anchor, text_xy,
+                        fontsize=9, ha=ha, va="center", fontweight="bold" if ok else "normal",
+                        arrowprops=dict(arrowstyle="-", color="#888", lw=.8, shrinkA=2, shrinkB=0))
+
+        ec = lambda ok: "k" if ok else "#666666"
+        f, r, ok = col("pm_out")
+        ax.add_patch(Ellipse((0, 0), 11.4, 8.6, fc="#fbfbfb", ec=f, lw=9))
+        f, r, ok = col("pm_in")
+        ax.add_patch(Ellipse((0, 0), 10.4, 7.6, fc="none", ec=f, lw=5))
+        ax.add_patch(Circle((-2.3, 0.6), 1.35, fc="#e7e7ee", ec="#999999", lw=1))
+        ax.text(-2.3, 0.6, "Nucleus\n(not assessed)", ha="center", va="center", fontsize=7, color="#777")
+        f, r, ok = col("er")
+        ax.add_patch(Ellipse((-2.3, 0.6), 4.3, 4.1, fc="none", ec=f, lw=7, ls=(0, (1, 0.5))))
+        f, r, ok = col("golgi")
+        for k in range(4):
+            ax.add_patch(Arc((1.4, 2.0 - 0.28 * k), 2.6 - 0.2 * k, 1.1, theta1=200, theta2=340, ec=f, lw=6, capstyle="round"))
+        f, r, ok = col("mito"); ff, rf, okf = col("fao")
+        for (x, y, a) in ((2.5, -1.7, 20), (-0.6, -2.7, -10), (3.4, 0.1, 80)):
+            ax.add_patch(Ellipse((x, y), 2.0, 0.95, angle=a, fc=f, ec=ec(ok), lw=1.5))
+            ax.add_patch(Ellipse((x, y), 1.1, 0.4, angle=a, fc=ff, ec=ec(okf), lw=1))
+        f, r, ok = col("endo")
+        for (x, y) in ((0.3, -0.3), (1.3, -0.9), (0.2, 1.0)):
+            ax.add_patch(Circle((x, y), 0.4, fc=f, ec=ec(ok), lw=1.5))
+        f, r, ok = col("ld")
+        for (x, y, rad) in ((-4.0, -2.0, .45), (-3.3, -2.4, .33), (-3.6, -1.4, .3), (-4.3, -1.3, .22)):
+            ax.add_patch(Circle((x, y), rad, fc=f, ec=ec(ok), lw=1.5))
+        f, r, ok = col("perox")
+        for (x, y) in ((4.0, 2.0), (-0.3, 3.1), (-1.5, -2.2)):
+            ax.add_patch(Circle((x, y), 0.25, fc=f, ec=ec(ok), lw=1.2))
+        f, r, ok = col("extra")
+        for (x, y) in ((6.5, 1.0), (7.0, 1.6), (6.6, 2.2), (7.3, 2.6)):
+            ax.add_patch(Circle((x, y), 0.17, fc=f, ec=ec(ok), lw=1))
+
+        tag("pm_out", (4.0, 3.1), (9.6, 4.6), "left")
+        tag("perox", (4.0, 2.0), (9.6, 3.6), "left")
+        tag("extra", (7.3, 2.0), (9.6, 2.3), "left")
+        tag("mito", (3.8, 0.3), (9.6, 0.0), "left")
+        tag("fao", (2.7, -1.9), (9.6, -1.5), "left")
+        tag("golgi", (1.4, 1.9), (1.4, 5.7), "center")
+        tag("er", (-4.4, 1.5), (-7.8, 2.2), "right")
+        tag("ld", (-4.3, -1.9), (-7.8, -1.5), "right")
+        tag("pm_in", (-3.8, -2.8), (-7.8, -3.9), "right")
+        tag("endo", (1.3, -1.3), (2.2, -5.8), "center")
+        ax.set_xlim(-12.5, 13.5); ax.set_ylim(-6.6, 6.6); ax.set_aspect("equal"); ax.axis("off")
+        ax.set_title(f"{label} vs Untreated", fontsize=12)
+    cax = fig.add_axes([0.97, 0.35, 0.015, 0.3])
+    cb = fig.colorbar(ScalarMappable(norm_, cmap), cax=cax, extend="both")
+    cb.set_label("relative log2FC (set median − all-lipid median)")
+    fig.suptitle("Lipid changes by subcellular localization (class-level assignment; * = FDR<0.01 & |rel. log2FC|≥0.5; exploratory, n=1)",
+                 fontsize=10, y=0.92)
+    fig.savefig(f"{outdir}/localization_cell_schematic.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -354,6 +460,7 @@ def main():
 
     for tag, cats_in in COLLECTIONS.items():
         make_plots(tag, cats_in, res, lfcs, member, args.outdir)
+    make_cell_schematic(res, args.outdir)
     print(f"\nWritten to {args.outdir}/")
 
 
