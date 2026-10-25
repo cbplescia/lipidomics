@@ -139,6 +139,80 @@ for k in ("TG", "PC", "PE", "CL", "PS"):
     SETS.append((f"{k}: no PUFA chain", "Class x unsaturation", f"{k} species without a chain >=4 db",
                  (lambda k: lambda c, p: c == k and p["molecular"] and not has_pufa(p))(k)))
 
+# ---- process / compartment / biophysics collection -------------------------------
+# Class-level assignments from the lipid-biology literature. Whole-cell lipidomics
+# cannot resolve leaflet or organelle, so these are "lipids that characteristically
+# live there / do that", not measurements of it.
+PL = ("PC", "PE", "PS", "PI", "PG", "PA", "CL", "LBPA", "LPC", "LPE", "LPI", "LPG", "LPA")
+PUFA_FA = {(20, 4), (20, 5), (22, 4), (22, 5), (22, 6)}
+
+
+def has_fa(p, wanted):
+    return p["molecular"] and any(x in wanted for x in acyl(p["chains"]))
+
+
+SETS_PROCESS = [
+    # signalling processes
+    ("Apoptosis / efferocytosis signalling (PS, Cer, SPH, CL)", "Signalling process",
+     "PS exposure ('eat-me'), ceramide/sphingosine pro-apoptotic, CL externalisation", cls_in("PS", "Cer", "SPH", "CL")),
+    ("Mitophagy & mitochondrial apoptosis (CL, PG, CoQ)", "Signalling process",
+     "Cardiolipin as mitophagy/apoptosis platform; PG = CL precursor", cls_in("CL", "PG", "Co")),
+    ("PKC / mTOR second messengers (DG, PA)", "Signalling process",
+     "Diacylglycerol and phosphatidic acid; PKC, mTORC1 signalling", cls_in("DG", "PA")),
+    ("Lysophospholipid GPCR signalling (LPA, cPA, LPC, LPI)", "Signalling process",
+     "Extracellular lysolipid mediators acting on LPAR/G2A/GPR55; chemotaxis, inflammation", cls_in("LPA", "cPA", "LPC", "LPI")),
+    ("Sphingolipid stress response (Cer, SPH)", "Signalling process",
+     "Ceramide / sphingoid bases in stress, cytokine and apoptosis signalling", cls_in("Cer", "SPH")),
+    ("Eicosanoid / pro-resolving mediator precursor pool (20:4, 20:5, 22:4-6 phospholipids)", "Signalling process",
+     "PUFA in membrane phospholipids released by PLA2 to make eicosanoids / resolvins",
+     lambda c, p: c in PL and has_fa(p, PUFA_FA)),
+    ("PUFA stored in neutral lipids (TG, DG, ChE with 20:4-22:6)", "Signalling process",
+     "Lipid-droplet PUFA reservoir (ATGL/lipophagy) feeding mediator synthesis",
+     lambda c, p: c in ("TG", "DG", "ChE") and any(x in PUFA_FA for x in acyl(p["chains"]))),
+    ("Ferroptosis-relevant lipids (AA/AdA-PE, PUFA ether PE/PC)", "Signalling process",
+     "PUFA-PE and PUFA ether lipids are the peroxidation substrates in ferroptosis",
+     lambda c, p: (c == "PE" and has_fa(p, {(20, 4), (22, 4)})) or (p["ether"] and c in ("PE", "PC") and total_db(p) >= 4)),
+    # compartments / leaflets
+    ("Cytosolic (inner) leaflet: PM & endosomes (PS, PE, PI, PA)", "Compartment / leaflet",
+     "Aminophospholipids and PI/PA are enriched on the cytosolic face of plasma and endosomal membranes", cls_in("PS", "PE", "PI", "PA")),
+    ("Exoplasmic / lumenal leaflet: PM outer & endosome lumen (PC, SM, glycosphingolipids)", "Compartment / leaflet",
+     "Choline lipids and sphingolipids on the outer / lumenal face", cls_in("PC", "SM", "Hex1Cer", "GM1", "GM2", "ST")),
+    ("Late endosome / ILV / lysosome (LBPA, Cer, Ch, GM1, GM2)", "Compartment / leaflet",
+     "BMP/LBPA-rich intralumenal vesicles; ceramide and cholesterol sorting; gangliosides", cls_in("LBPA", "Cer", "Ch", "GM1", "GM2")),
+    ("Mitochondrial membranes (CL, PG, CoQ)", "Compartment / leaflet",
+     "Inner-membrane lipids: cardiolipin, PG (CL precursor), ubiquinone", cls_in("CL", "PG", "Co")),
+    ("Ordered raft-like domains (SM, glycosphingolipids, Ch)", "Compartment / leaflet",
+     "Saturated sphingolipid/cholesterol microdomains; receptor signalling platforms", cls_in("SM", "Hex1Cer", "GM1", "GM2", "ST", "Ch")),
+    # biophysics
+    ("Negative curvature / cone-shaped (PE, PA, DG, CL, Cer, Ch)", "Membrane biophysics",
+     "Promote fusion, fission, tubulation and non-bilayer intermediates", cls_in("PE", "PA", "DG", "CL", "Cer", "Ch")),
+    ("Positive curvature / inverted-cone (lysophospholipids, gangliosides)", "Membrane biophysics",
+     "Promote budding, micelle-like and highly curved structures", cls_in("LPC", "LPE", "LPI", "LPG", "LPA", "GM1", "GM2", "ST")),
+    ("Bilayer-forming cylindrical lipids (PC, PS, PI, PG, SM)", "Membrane biophysics",
+     "Planar bilayer scaffolds", cls_in("PC", "PS", "PI", "PG", "SM")),
+    ("Fluidising: polyunsaturated phospholipids (chain >=4 db)", "Membrane biophysics",
+     "Increase disorder, flexibility and permeability", lambda c, p: c in PL and has_pufa(p)),
+    ("Rigidifying: saturated/MUFA phospholipids (no chain >=2 db)", "Membrane biophysics",
+     "Tighter packing, higher melting temperature",
+     lambda c, p: c in PL and p["molecular"] and bool(acyl(p["chains"])) and all(db <= 1 for _, db in acyl(p["chains"]))),
+    ("Ordering / condensing lipids (Ch, SM, Cer, glycosphingolipids)", "Membrane biophysics",
+     "Increase packing and thickness, reduce fluidity", cls_in("Ch", "SM", "Cer", "Hex1Cer", "GM1", "GM2", "ST")),
+    ("Long acyl chain (>=C22) lipids: thickness / interdigitation", "Membrane biophysics",
+     "Very-long chains span or interdigitate across leaflets",
+     lambda c, p: p["molecular"] and bool(acyl(p["chains"])) and any(cc >= 22 for cc, _ in acyl(p["chains"])) and c not in ("TG", "ChE")),
+    ("Short / medium acyl chain (<C16) lipids: increased fluidity", "Membrane biophysics",
+     "Short chains thin and loosen membranes; also fatty-acid oxidation intermediates",
+     lambda c, p: p["molecular"] and bool(acyl(p["chains"])) and any(cc < 16 for cc, _ in acyl(p["chains"])) and c not in ("AcCa",)),
+    ("Ether-linked phospholipids: fusion-prone, tighter packing", "Membrane biophysics",
+     "Plasmalogens favour hexagonal phases and fusion; reduce bilayer permeability", lambda c, p: p["ether"] and c in PL),
+]
+SETS += SETS_PROCESS
+COLLECTIONS = {
+    "functional": ["Membrane structure", "Organelle", "Storage", "Signalling", "Sphingolipids",
+                   "Chemical feature", "Class x unsaturation"],
+    "process_biophysics": ["Signalling process", "Compartment / leaflet", "Membrane biophysics"],
+}
+
 
 def annotate(meta):
     parsed = {i: parse(l) for i, l in meta["Lipid"].items()}
@@ -180,6 +254,65 @@ def hit(d):
     return (d.FDR < 0.01) & (d.relative_log2FC.abs() >= 0.5)
 
 
+# ---------------------------------------------------------------- plots
+def make_plots(tag, cats_in, res, lfcs, member, outdir):
+    sub = {c: res[c][res[c].category.isin(cats_in)] for c in res}
+    order = sub["IFNG"].assign(a=lambda d: d.relative_log2FC).sort_values(["category", "a"])
+    cats = [k for k in cats_in if k in set(order.category)]
+    order = pd.concat([order[order.category == k] for k in cats])
+    names = order.set.tolist()
+    ypos = {n: i for i, n in enumerate(names[::-1])}
+    lim = max(sub[c].relative_log2FC.abs().max() for c in sub) * 1.1
+    fig, axs = plt.subplots(1, 2, figsize=(15, 0.36 * len(names) + 2.2), sharey=True)
+    for ax, (c, label) in zip(axs, (("IFNB", "IFN-β"), ("IFNG", "IFN-γ"))):
+        d = sub[c].set_index("set").reindex(names)
+        sc = ax.scatter(d.relative_log2FC, [ypos[n] for n in names], s=25 + d.n * 3,
+                        c=d.relative_log2FC, cmap="RdBu_r", vmin=-lim, vmax=lim,
+                        edgecolor=np.where(hit(d), "k", "#999999"),
+                        linewidth=np.where(hit(d), 1.8, .5))
+        ax.axvline(0, c="k", lw=.6)
+        ax.set_xlim(-lim, lim)
+        ax.set_yticks(list(ypos.values())); ax.set_yticklabels(list(ypos.keys()), fontsize=7)
+        ax.set_xlabel("relative log2FC (set median − all-lipid median)")
+        ax.set_title(f"{label} vs Untreated", fontsize=10)
+        ax.grid(axis="x", lw=.3)
+        ax.set_ylim(-.7, len(names) - .3)
+    # category separators
+    start = 0
+    for k in cats[::-1]:
+        n = (order.category == k).sum()
+        for ax in axs:
+            ax.axhline(start - .5, c="#888", lw=.5)
+            ax.text(lim * 1.03, start + n / 2 - .5, k, rotation=270, va="center", fontsize=7, color="#555") if ax is axs[1] else None
+        start += n
+    fig.colorbar(sc, ax=axs, shrink=.4, label="relative log2FC", pad=.08)
+    for n_ in (5, 20, 50):
+        axs[1].scatter([], [], s=25 + n_ * 3, c="w", edgecolor="k", label=f"n={n_}")
+    axs[1].legend(loc="lower right", fontsize=7, frameon=True, title="set size", title_fontsize=7)
+    fig.suptitle("Lipid set analysis (black outline: FDR<0.01 and |rel. log2FC|>=0.5; exploratory, n=1 per condition)", fontsize=10, y=0.93)
+    fig.savefig(f"{outdir}/{tag}_dotplot.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+    # ---- per-set distributions
+    fig, axs = plt.subplots(1, 2, figsize=(15, 0.36 * len(names) + 2), sharey=True)
+    rng = np.random.default_rng(0)
+    for ax, (c, label) in zip(axs, (("IFNB", "IFN-β"), ("IFNG", "IFN-γ"))):
+        lfc = lfcs[c]
+        for n in names:
+            v = lfc[member[n].reindex(lfc.index).fillna(False)]
+            y = ypos[n]
+            ax.scatter(v, y + rng.uniform(-.25, .25, len(v)), s=5, c="#555", alpha=.5, edgecolor="none")
+            ax.plot([v.median()] * 2, [y - .35, y + .35], c="#c0392b", lw=2)
+        ax.axvline(0, c="k", lw=.6); ax.axvline(lfc.median(), c="#2471a3", lw=.8, ls="--")
+        ax.set_yticks(list(ypos.values())); ax.set_yticklabels(list(ypos.keys()), fontsize=7)
+        ax.set_xlabel("log2FC vs Untreated"); ax.set_title(f"{label} vs Untreated", fontsize=10)
+        ax.set_ylim(-.7, len(names) - .3)
+    fig.suptitle("Per-lipid log2FC within each set (red = set median, blue dashed = all-lipid median)", fontsize=10)
+    fig.savefig(f"{outdir}/{tag}_distributions.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -219,60 +352,8 @@ def main():
         print(res[c].sort_values("p").head(10)[["set", "n", "relative_log2FC", "p", "FDR"]]
               .round(3).to_string(index=False))
 
-    # ---- dot plot (GO-style)
-    order = res["IFNG"].assign(a=lambda d: d.relative_log2FC).sort_values(["category", "a"])
-    cats = list(dict.fromkeys(order.category))
-    order = pd.concat([order[order.category == k] for k in cats])
-    names = order.set.tolist()
-    ypos = {n: i for i, n in enumerate(names[::-1])}
-    lim = max(res[c].relative_log2FC.abs().max() for c in res) * 1.1
-    fig, axs = plt.subplots(1, 2, figsize=(13, 0.33 * len(names) + 2.2), sharey=True)
-    for ax, (c, label) in zip(axs, (("IFNB", "IFN-β"), ("IFNG", "IFN-γ"))):
-        d = res[c].set_index("set").reindex(names)
-        sc = ax.scatter(d.relative_log2FC, [ypos[n] for n in names], s=25 + d.n * 3,
-                        c=d.relative_log2FC, cmap="RdBu_r", vmin=-lim, vmax=lim,
-                        edgecolor=np.where(hit(d), "k", "#999999"),
-                        linewidth=np.where(hit(d), 1.8, .5))
-        ax.axvline(0, c="k", lw=.6)
-        ax.set_xlim(-lim, lim)
-        ax.set_yticks(list(ypos.values())); ax.set_yticklabels(list(ypos.keys()), fontsize=7.5)
-        ax.set_xlabel("relative log2FC (set median − all-lipid median)")
-        ax.set_title(f"{label} vs Untreated", fontsize=10)
-        ax.grid(axis="x", lw=.3)
-        ax.set_ylim(-.7, len(names) - .3)
-    # category separators
-    start = 0
-    for k in cats[::-1]:
-        n = (order.category == k).sum()
-        for ax in axs:
-            ax.axhline(start - .5, c="#888", lw=.5)
-            ax.text(lim * 1.03, start + n / 2 - .5, k, rotation=270, va="center", fontsize=7, color="#555") if ax is axs[1] else None
-        start += n
-    fig.colorbar(sc, ax=axs, shrink=.4, label="relative log2FC", pad=.08)
-    for n_ in (5, 20, 50):
-        axs[1].scatter([], [], s=25 + n_ * 3, c="w", edgecolor="k", label=f"n={n_}")
-    axs[1].legend(loc="lower right", fontsize=7, frameon=True, title="set size", title_fontsize=7)
-    fig.suptitle("Lipid set analysis (black outline: FDR<0.01 and |rel. log2FC|>=0.5; exploratory, n=1 per condition)", fontsize=10, y=0.93)
-    fig.savefig(f"{args.outdir}/lipid_set_dotplot.png", dpi=200, bbox_inches="tight")
-    plt.close(fig)
-
-    # ---- per-set distributions
-    fig, axs = plt.subplots(1, 2, figsize=(13, 0.33 * len(names) + 2), sharey=True)
-    rng = np.random.default_rng(0)
-    for ax, (c, label) in zip(axs, (("IFNB", "IFN-β"), ("IFNG", "IFN-γ"))):
-        lfc = lfcs[c]
-        for n in names:
-            v = lfc[member[n].reindex(lfc.index).fillna(False)]
-            y = ypos[n]
-            ax.scatter(v, y + rng.uniform(-.25, .25, len(v)), s=5, c="#555", alpha=.5, edgecolor="none")
-            ax.plot([v.median()] * 2, [y - .35, y + .35], c="#c0392b", lw=2)
-        ax.axvline(0, c="k", lw=.6); ax.axvline(lfc.median(), c="#2471a3", lw=.8, ls="--")
-        ax.set_yticks(list(ypos.values())); ax.set_yticklabels(list(ypos.keys()), fontsize=7.5)
-        ax.set_xlabel("log2FC vs Untreated"); ax.set_title(f"{label} vs Untreated", fontsize=10)
-        ax.set_ylim(-.7, len(names) - .3)
-    fig.suptitle("Per-lipid log2FC within each set (red = set median, blue dashed = all-lipid median)", fontsize=10)
-    fig.savefig(f"{args.outdir}/lipid_set_distributions.png", dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    for tag, cats_in in COLLECTIONS.items():
+        make_plots(tag, cats_in, res, lfcs, member, args.outdir)
     print(f"\nWritten to {args.outdir}/")
 
 
