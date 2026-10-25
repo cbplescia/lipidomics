@@ -54,7 +54,8 @@ def load(path, sheet):
     keep = list(area.values())
     mat = df[keep].apply(pd.to_numeric, errors="coerce")
     mat.columns = list(SAMPLES.values())
-    mat = mat.mask(mat <= 0)  # 0 / blank = not detected
+    # 0 / blank / integration artefacts (<100 counts) = not detected
+    mat = mat.mask(mat < 100)
     meta = df[["Lipid", "Class", "Adduct", "RT (min)", "Grade"]]
     return mat, meta
 
@@ -70,6 +71,11 @@ def normalise(mat, how):
         size = 2 ** (np.log2(full).sub(ref, axis=0).median())
     size = size / size.mean()
     return mat / size, size
+
+
+def pseudocount(norm):
+    """Half the 1st percentile of detected values, so 'not detected' stays finite."""
+    return np.nanpercentile(norm.values, 1) / 2
 
 
 def lfc_table(mat, num, den, pseudo):
@@ -97,8 +103,7 @@ def main():
     mat, meta = load(args.xlsx, args.sheet)
     norm, size = normalise(mat, args.norm)
     print(f"{len(mat)} lipids; size factors ({args.norm}):\n{size.round(3).to_string()}")
-    # pseudocount = half the smallest detected value, so "not detected" stays finite
-    pseudo = norm.min().min() / 2
+    pseudo = pseudocount(norm)
 
     out = meta.copy()
     out[[f"{c}_area" for c in norm.columns]] = norm.values
