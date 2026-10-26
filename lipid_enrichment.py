@@ -87,6 +87,7 @@ def lsea(ranked, sets, perms, rng):
     r = np.abs(ranked.to_numpy())
     N = len(r)
     pos = {n: k for k, n in enumerate(names)}
+    perm_order = np.argsort(rng.random((perms, N)), axis=1)  # shared null draws, first nh columns per set
     rows = []
     for name, members in sets.items():
         idx = np.array(sorted(pos[m] for m in members if m in pos))
@@ -107,7 +108,7 @@ def lsea(ranked, sets, perms, rng):
             return np.where(mx > -mn, mx, mn)
 
         obs = es_batch(idx[None, :])[0]
-        perm_ix = np.argsort(rng.random((perms, N)), axis=1)[:, :nh]
+        perm_ix = perm_order[:, :nh]
         null = es_batch(perm_ix)
         same = null[np.sign(null) == np.sign(obs)]
         nes = obs / np.abs(same).mean() if len(same) else np.nan
@@ -152,8 +153,11 @@ def main():
     sets = {k: v for k, v in sets.items() if len(v) >= args.min_size}
     print(f"{len(meta)} lipids, {len(sets)} sets (min size {args.min_size})")
 
-    for c, label in (("IFNB", "IFN-β"), ("IFNG", "IFN-γ")):
-        lfc, st = lfc_table(norm, c, "Untreated", pseudo)
+    SHOW = {"Untreated": "Mock", "IFNB": "IFN-β", "IFNG": "IFN-γ"}
+    for num, den in (("IFNB", "Untreated"), ("IFNG", "Untreated"), ("IFNG", "IFNB")):
+        c = f"{num}_vs_{'Mock' if den == 'Untreated' else den}"      # file tag
+        label = f"{SHOW[num]} vs {SHOW[den]}"
+        lfc, st = lfc_table(norm, num, den, pseudo)
         both = lfc[st == "both detected"].sort_values(ascending=False)
         # ---------------- LSEA
         sub = {k: [m for m in v if m in both.index] for k, v in sets.items()}
@@ -161,8 +165,8 @@ def main():
         res = lsea(both, sub, args.perms, rng)
         res["median_log2FC"] = [both[sub[s]].median() for s in res.set]
         res = res.sort_values("p")
-        res.to_csv(f"{args.outdir}/LSEA_{c}_vs_Untreated.csv", index=False)
-        print(f"\n== {c}: top enriched sets ==")
+        res.to_csv(f"{args.outdir}/LSEA_{c}.csv", index=False)
+        print(f"\n== {label}: top enriched sets ==")
         print(res.head(12)[["set", "size", "NES", "p", "FDR"]].round(3).to_string(index=False))
 
         top = res[res.p < 0.05].copy()
@@ -174,10 +178,10 @@ def main():
             fig, ax = plt.subplots(figsize=(8, 0.28 * len(top) + 1.8))
             ax.barh(top.set, top.NES, color=cc, edgecolor=np.where(top.FDR < 0.05, "k", "none"), linewidth=1.2)
             ax.axvline(0, c="k", lw=.6)
-            ax.set_xlabel("NES (positive = higher in " + label + ")")
-            ax.set_title(f"Lipid set enrichment: {label} vs Untreated\n(p<0.05; black outline = FDR<0.05; n=1, exploratory)", fontsize=9)
+            ax.set_xlabel(f"NES (positive = higher in {SHOW[num]})")
+            ax.set_title(f"Lipid set enrichment: {label}\n(p<0.05; black outline = FDR<0.05; n=1, exploratory)", fontsize=9)
             ax.tick_params(axis="y", labelsize=7)
-            fig.tight_layout(); fig.savefig(f"{args.outdir}/LSEA_{c}_vs_Untreated.png", dpi=200); plt.close(fig)
+            fig.tight_layout(); fig.savefig(f"{args.outdir}/LSEA_{c}.png", dpi=200); plt.close(fig)
 
         # ---------------- LION/web inputs
         d = pd.DataFrame({"lipid_LION": [lion_name(meta.at[i, "Lipid"], meta.at[i, "Class"]) for i in lfc.index],
